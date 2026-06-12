@@ -1,0 +1,47 @@
+services:
+  postgres:
+    build: ./postgres
+    container_name: app-postgres
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      - ./secrets/gcs-key.json:/etc/pgbackrest/gcs-key.json:ro
+    command:
+      - "postgres"
+      - "-c"
+      - "wal_level=replica"
+      - "-c"
+      - "archive_mode=on"
+      - "-c"
+      - "archive_command=pgbackrest --stanza=main archive-push %p"
+      - "-c"
+      - "archive_timeout=60s"
+      - "-c"
+      - "max_wal_senders=3"
+
+  backup-cron:
+    build: ./postgres
+    container_name: app-pgbackrest-cron
+    restart: unless-stopped
+    depends_on:
+      - postgres
+    env_file:
+      - .env
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./pgbackrest/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      - ./secrets/gcs-key.json:/etc/pgbackrest/gcs-key.json:ro
+    entrypoint: >
+      sh -c "
+      echo '0 2 * * 0 pgbackrest --stanza=main --type=full backup' > /etc/crontabs/root &&
+      echo '0 2 * * 1-6 pgbackrest --stanza=main --type=diff backup' >> /etc/crontabs/root &&
+      crond -f -l 8
+      "
+
+volumes:
+  pgdata:
